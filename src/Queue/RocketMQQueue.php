@@ -1,52 +1,58 @@
 <?php
 
-namespace Freyo\LaravelQueueRocketMQ\Queue;
+namespace Nichozuo\LaravelQueueRocketMQ\Queue;
 
-use Freyo\LaravelQueueRocketMQ\Queue\Jobs\RocketMQJob;
+use DateInterval;
+use DateTimeInterface;
+use Exception;
+use Illuminate\Contracts\Queue\Job;
+use MQ\Exception\MessageNotExistException;
+use MQ\MQConsumer;
+use MQ\MQProducer;
+use Nichozuo\LaravelQueueRocketMQ\Queue\Jobs\RocketMQJob;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Queue\Queue as QueueContract;
 use Illuminate\Queue\Queue;
 use Illuminate\Support\Arr;
 use MQ\Model\TopicMessage;
 use MQ\MQClient;
+use ReflectionException;
+use ReflectionMethod;
 
 class RocketMQQueue extends Queue implements QueueContract
 {
     /**
      * @var array
      */
-    protected $config;
+    protected array $config;
 
     /**
-     * @var \ReflectionMethod
+     * @var ReflectionMethod
      */
-    private $createPayload;
+    private ReflectionMethod $createPayload;
 
     /**
-     * @var \MQ\MQClient
+     * @var MQClient
      */
-    protected $client;
+    protected MQClient $client;
 
     /**
      * RocketMQQueue constructor.
-     *
-     * @param \MQ\MQClient $client
+     * @param MQClient $client
      * @param array $config
-     *
-     * @throws \ReflectionException
+     * @throws ReflectionException
      */
     public function __construct(MQClient $client, array $config)
     {
         $this->client = $client;
         $this->config = $config;
-
-        $this->createPayload = new \ReflectionMethod($this, 'createPayload');
+        $this->createPayload = new ReflectionMethod($this, 'createPayload');
     }
 
     /**
      * @return bool
      */
-    public function isPlain()
+    public function isPlain(): bool
     {
         return (bool)Arr::get($this->config, 'plain.enable');
     }
@@ -54,70 +60,57 @@ class RocketMQQueue extends Queue implements QueueContract
     /**
      * @return string
      */
-    public function getPlainJob()
+    public function getPlainJob(): string
     {
         return Arr::get($this->config, 'plain.job');
     }
 
     /**
      * Get the size of the queue.
-     *
      * @param string $queue
-     *
      * @return int
      */
-    public function size($queue = null)
+    public function size($queue = null): int
     {
         return 1;
     }
 
     /**
      * Push a new job onto the queue.
-     *
      * @param string|object $job
      * @param mixed $data
      * @param string $queue
-     *
-     * @throws \Exception
-     *
-     * @return mixed
+     * @return TopicMessage
+     * @throws Exception
      */
-    public function push($job, $data = '', $queue = null)
+    public function push($job, $data = '', $queue = null): TopicMessage
     {
         if ($this->isPlain()) {
             return $this->pushRaw($job->getPayload(), $queue);
         }
-
         $payload = $this->createPayload->getNumberOfParameters() === 3
             ? $this->createPayload($job, $queue, $data) // version >= 5.7
             : $this->createPayload($job, $data);
-
         return $this->pushRaw($payload, $queue);
     }
 
     /**
      * Push a raw payload onto the queue.
-     *
      * @param string $payload
      * @param string $queue
      * @param array $options
-     *
-     * @throws \Exception
-     *
      * @return TopicMessage
+     * @throws Exception
      */
-    public function pushRaw($payload, $queue = null, array $options = [])
+    public function pushRaw($payload, $queue = null, array $options = []): TopicMessage
     {
         $message = new TopicMessage($payload);
-
         if ($this->config['use_message_tag'] && $queue) {
             $message->setMessageTag($queue);
         }
-
         if ($delay = Arr::get($options, 'delay', 0)) {
             $message->setStartDeliverTime(time() * 1000 + $delay * 1000);
         }
-
         return $this->getProducer(
             $this->config['use_message_tag'] ? $this->config['queue'] : $queue
         )->publishMessage($message);
@@ -125,17 +118,14 @@ class RocketMQQueue extends Queue implements QueueContract
 
     /**
      * Push a new job onto the queue after a delay.
-     *
-     * @param \DateTimeInterface|\DateInterval|int $delay
+     * @param DateTimeInterface|DateInterval|int $delay
      * @param string|object $job
      * @param mixed $data
      * @param string $queue
-     *
-     * @throws \Exception
-     *
-     * @return mixed
+     * @return TopicMessage
+     * @throws Exception
      */
-    public function later($delay, $job, $data = '', $queue = null)
+    public function later($delay, $job, $data = '', $queue = null): TopicMessage
     {
         $delay = method_exists($this, 'getSeconds')
             ? $this->getSeconds($delay)
@@ -154,14 +144,11 @@ class RocketMQQueue extends Queue implements QueueContract
 
     /**
      * Pop the next job off of the queue.
-     *
-     * @param string $queue
-     *
-     * @return \Illuminate\Contracts\Queue\Job|null
-     *
-     * @throws \Exception
+     * @param null $queue
+     * @return Job|RocketMQJob|null
+     * @throws Exception
      */
-    public function pop($queue = null)
+    public function pop($queue = null): Job|RocketMQJob|null
     {
         try {
 
@@ -172,8 +159,8 @@ class RocketMQQueue extends Queue implements QueueContract
             /** @var array $messages */
             $messages = $consumer->consumeMessage(1, $this->config['wait_seconds']);
 
-        } catch (\Exception $e) {
-            if ($e instanceof \MQ\Exception\MessageNotExistException) {
+        } catch (Exception $e) {
+            if ($e instanceof MessageNotExistException) {
                 return null;
             }
 
@@ -191,13 +178,11 @@ class RocketMQQueue extends Queue implements QueueContract
 
     /**
      * Get the consumer.
-     *
-     * @param string $topicName
-     * @param string $messageTag
-     *
-     * @return \MQ\MQConsumer
+     * @param string|null $topicName
+     * @param string|null $messageTag
+     * @return MQConsumer
      */
-    public function getConsumer($topicName = null, $messageTag = null)
+    public function getConsumer(string $topicName = null, string $messageTag = null): MQConsumer
     {
         return $this->client->getConsumer(
             $this->config['instance_id'],
@@ -209,12 +194,10 @@ class RocketMQQueue extends Queue implements QueueContract
 
     /**
      * Get the producer.
-     *
-     * @param string $topicName
-     *
-     * @return \MQ\MQProducer
+     * @param string|null $topicName
+     * @return MQProducer
      */
-    public function getProducer($topicName = null)
+    public function getProducer(string $topicName = null): MQProducer
     {
         return $this->client->getProducer(
             $this->config['instance_id'],
