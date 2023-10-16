@@ -1,5 +1,5 @@
 {
-    "name": "nichozuo/laravel-queue-rocketmq",
+    "name": "yoruchiaki/laravel-queue-rocketmq",
     "description": "Queue Adapter for AlibabaMQ(Apache RocketMQ) SDK",
     "keywords": ["laravel-queue", "rocketmq", "aliyun", "alibabamq"],
     "require": {
